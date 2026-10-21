@@ -53,6 +53,18 @@ class MatchRunner:
     def is_finished(self) -> bool:
         return self.current_minute >= 90
 
+    def submit_user_take(self, text: str, resolves_by_minute: int = 90) -> None:
+        """
+        Direct path for the web UI: record a user take at whatever minute
+        the match is currently at, independent of the kickoff/half-time
+        synchronous callback used by the terminal script. Used by /api/take.
+        """
+        text = text.strip()
+        if not text:
+            return
+        self._log(self.current_minute, "user", text)
+        self.ledger.add("user", text, self.current_minute, max(resolves_by_minute, self.current_minute + 1))
+
     def _log(self, minute: int, speaker: str, text: str, used_fallback: bool = False) -> None:
         self.transcript.append(TranscriptLine(minute, speaker, text, used_fallback))
 

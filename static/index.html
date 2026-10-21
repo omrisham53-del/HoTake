@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HoTake</title>
+<style>
+  :root {
+    --bg: #0c0f0b;
+    --panel: #12170f;
+    --border: #2a3524;
+    --green: #6fdc6f;
+    --green-dim: #3f8a3f;
+    --amber: #e8c468;
+    --red: #e06a5f;
+    --text: #d9e8d0;
+    --text-dim: #7e9273;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", "Consolas", "Courier New", monospace;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header .scoreboard { font-size: 20px; letter-spacing: 1px; }
+  header .minute { color: var(--amber); font-size: 16px; }
+  .clive-head { font-size: 28px; filter: drop-shadow(0 0 6px var(--green-dim)); }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .panel { background: var(--bg); display: flex; flex-direction: column; overflow: hidden; }
+  .panel h2 {
+    margin: 0;
+    padding: 10px 16px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  #feed, #ledger { flex: 1; overflow-y: auto; padding: 12px 16px; }
+  .line { margin-bottom: 10px; display: flex; gap: 8px; }
+  .line .minute-tag { color: var(--text-dim); min-width: 32px; }
+  .line.clive .bubble { color: var(--green); }
+  .line.analyst .bubble { color: var(--amber); opacity: 0.85; font-style: italic; }
+  .line.system .bubble { color: var(--text-dim); }
+  .line.user .bubble { color: #a9c9e8; }
+  .bubble { line-height: 1.4; }
+  .fallback-tag { font-size: 10px; color: var(--text-dim); border: 1px solid var(--border); padding: 1px 4px; margin-left: 6px; border-radius: 3px; }
+  .claim { padding: 10px; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 10px; }
+  .claim .speaker { font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 1px; }
+  .claim .outcome { float: right; font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+  .outcome.pending { background: var(--border); color: var(--text-dim); }
+  .outcome.correct { background: #1e3a1e; color: var(--green); }
+  .outcome.incorrect { background: #3a1e1e; color: var(--red); }
+  .claim .text { margin-top: 6px; }
+  footer {
+    display: flex;
+    gap: 10px;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--panel);
+  }
+  footer input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    font-family: inherit;
+    border-radius: 4px;
+  }
+  button {
+    background: var(--green-dim);
+    color: #0c0f0b;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-weight: bold;
+    cursor: pointer;
+  }
+  button:hover { background: var(--green); }
+  button.secondary { background: var(--border); color: var(--text); }
+  #startScreen { position: fixed; inset: 0; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+  #startScreen button { font-size: 16px; padding: 14px 24px; }
+</style>
+</head>
+<body>
+
+<div id="startScreen">
+  <button id="startBtn">Kick off</button>
+</div>
+
+<header>
+  <div class="clive-head">📺</div>
+  <div class="scoreboard" id="scoreboard">-- vs --</div>
+  <div class="minute" id="minuteClock">0'</div>
+</header>
+
+<main>
+  <div class="panel">
+    <h2>Live feed</h2>
+    <div id="feed"></div>
+  </div>
+  <div class="panel">
+    <h2>Ledger</h2>
+    <div id="ledger"></div>
+  </div>
+</main>
+
+<footer>
+  <input id="takeInput" type="text" placeholder="Your take..." />
+  <button id="sendTake">Send</button>
+  <button id="pauseBtn" class="secondary">Pause</button>
+</footer>
+
+<script>
+const feedEl = document.getElementById("feed");
+const ledgerEl = document.getElementById("ledger");
+const scoreboardEl = document.getElementById("scoreboard");
+const minuteClockEl = document.getElementById("minuteClock");
+const startScreen = document.getElementById("startScreen");
+const pauseBtn = document.getElementById("pauseBtn");
+
+let running = false;
+let renderedCount = 0;
+let tickHandle = null;
+
+function speakerClass(speaker) {
+  return { clive: "clive", analyst: "analyst", system: "system", user: "user" }[speaker] || "system";
+}
+
+function renderTranscript(transcript) {
+  for (let i = renderedCount; i < transcript.length; i++) {
+    const line = transcript[i];
+    const div = document.createElement("div");
+    div.className = "line " + speakerClass(line.speaker);
+    const fb = line.used_fallback ? '<span class="fallback-tag">fallback</span>' : "";
+    div.innerHTML = `<span class="minute-tag">${line.minute}'</span><span class="bubble">${escapeHtml(line.text)}${fb}</span>`;
+    feedEl.appendChild(div);
+  }
+  renderedCount = transcript.length;
+  feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+function renderLedger(ledger) {
+  ledgerEl.innerHTML = "";
+  for (const claim of ledger) {
+    const div = document.createElement("div");
+    div.className = "claim";
+    div.innerHTML = `
+      <span class="speaker">${claim.speaker}</span>
+      <span class="outcome ${claim.outcome}">${claim.outcome}</span>
+      <div class="text">${escapeHtml(claim.text)}</div>
+    `;
+    ledgerEl.appendChild(div);
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.innerText = s;
+  return d.innerHTML;
+}
+
+function applyState(state) {
+  if (state.error) return;
+  scoreboardEl.textContent = state.score;
+  minuteClockEl.textContent = state.minute + "'";
+  renderTranscript(state.transcript);
+  renderLedger(state.ledger);
+  if (state.finished) {
+    running = false;
+    pauseBtn.textContent = "Match finished";
+    pauseBtn.disabled = true;
+    clearInterval(tickHandle);
+  }
+}
+
+async function postJson(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  return res.json();
+}
+
+async function startMatch() {
+  startScreen.style.display = "none";
+  const state = await postJson("/api/start?seed=7");
+  applyState(state);
+  running = true;
+  tickHandle = setInterval(async () => {
+    if (!running) return;
+    const s = await postJson("/api/tick");
+    applyState(s);
+  }, 900);
+}
+
+document.getElementById("startBtn").addEventListener("click", startMatch);
+
+document.getElementById("sendTake").addEventListener("click", async () => {
+  const input = document.getElementById("takeInput");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const state = await postJson("/api/take", { text, resolves_by_minute: 90 });
+  applyState(state);
+});
+
+document.getElementById("takeInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("sendTake").click();
+});
+
+pauseBtn.addEventListener("click", () => {
+  running = !running;
+  pauseBtn.textContent = running ? "Pause" : "Resume";
+});
+</script>
+</body>
+</html>
